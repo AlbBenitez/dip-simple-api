@@ -4,7 +4,7 @@ on:
     branches: [ "main" ]
   
 jobs:
-  build-and-push-to-ecr:
+  build:
     name: Build Docker Image
     runs-on: ubuntu-latest  
     steps:  
@@ -27,3 +27,38 @@ jobs:
           run: |
             docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+  deploy:
+    name: Deploy to Ec2
+    runs on: ubuntu-latest
+    nedds: build
+    steps:
+        - name: Configure AWS ECR Credentials
+          uses: aws-actions/configure-aws-credentials@v4
+          with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{secrets.AWS_REGION}}
+        - name: Log into AWS ECR
+          id: login-aws-ecr
+          uses: aws-actions/amazon-ecr-login@v2
+        - name: Deploy to Ec2
+          run: |
+          command_id = $(aws ssm send-command \
+          --document-name "AWS-RunShellScript" \
+          --targets "Key=instanceids,Values=i-02cdcf4ef8d2ed4f7,i-09f82832f20019e6f" \
+          --comment "Pull Docker Image and run it" \
+          --parameters 'commands=[
+          "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${{steps.login-aws-ecr.outputs.registry}}",
+          ""
+          ]' --query "Command.CommandId" --output text)
+
+          echo "Command ID: $command_id"
+
+          aws ssm wait command-executed \
+          --command-id $command_id
+          --instance-id i-02cdcf4ef8d2ed4f7
+          
+          commandOutput = $(aws ssm list-commnads --command-id $command_id)
+
+          echo "$commnadOutput"
+
